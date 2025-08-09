@@ -505,6 +505,25 @@ const canAddSystemPrompt = computed(() => {
   return settings.value.newSystemPrompt.name.trim() && settings.value.newSystemPrompt.content.trim();
 });
 
+// Computed properties for alphabetically sorted lists
+const sortedProviders = computed(() => {
+  return [...settings.value.providers].sort((a, b) => 
+    a.name.toLowerCase().localeCompare(b.name.toLowerCase())
+  );
+});
+
+const sortedCustomApis = computed(() => {
+  return [...settings.value.customApis].sort((a, b) => 
+    a.name.toLowerCase().localeCompare(b.name.toLowerCase())
+  );
+});
+
+const sortedSystemPrompts = computed(() => {
+  return [...settings.value.systemPrompts].sort((a, b) => 
+    a.name.toLowerCase().localeCompare(b.name.toLowerCase())
+  );
+});
+
 const handleClose = () => {
   if (canSave.value) {
     saveSettings();
@@ -636,11 +655,11 @@ const handleClose = () => {
               <!-- APIs Grid -->
               <div v-if="settings.customApis.length > 0" class="space-y-2">
                 <div 
-                  v-for="(api, index) in settings.customApis" 
-                  :key="index" 
-                  @click="selectCustomApi(index)"
+                  v-for="api in sortedCustomApis" 
+                  :key="api.name" 
+                  @click="selectCustomApi(settings.customApis.findIndex(a => a === api))"
                   class="p-4 rounded-lg border cursor-pointer transition-all"
-                  :class="settings.selectedCustomApi === index 
+                  :class="settings.selectedCustomApi === settings.customApis.findIndex(a => a === api) 
                     ? 'bg-blue-600/20 border-blue-500 ring-2 ring-blue-500/50' 
                     : 'bg-gray-800 border-gray-600 hover:border-gray-500'"
                 >
@@ -648,10 +667,10 @@ const handleClose = () => {
                     <div class="flex-1">
                       <div class="flex items-center gap-3">
                         <div class="text-white font-medium">{{ api.name }}</div>
-                        <div v-if="settings.selectedCustomApi === index" class="px-2 py-1 bg-blue-600 text-white text-xs rounded-full">
+                        <div v-if="settings.selectedCustomApi === settings.customApis.findIndex(a => a === api)" class="px-2 py-1 bg-blue-600 text-white text-xs rounded-full">
                           Active
                         </div>
-                        <div v-if="settings.defaultCustomApi === index" class="px-2 py-1 bg-green-600 text-white text-xs rounded-full">
+                        <div v-if="settings.defaultCustomApi === settings.customApis.findIndex(a => a === api)" class="px-2 py-1 bg-green-600 text-white text-xs rounded-full">
                           Default
                         </div>
                       </div>
@@ -664,29 +683,29 @@ const handleClose = () => {
                     </div>
                     <div class="flex gap-2 ml-4" @click.stop>
                       <button
-                        v-if="settings.defaultCustomApi !== index"
-                        @click="setDefaultCustomApi(index)"
+                        v-if="settings.defaultCustomApi !== settings.customApis.findIndex(a => a === api)"
+                        @click="setDefaultCustomApi(settings.customApis.findIndex(a => a === api))"
                         class="px-3 py-1 bg-green-600 hover:bg-green-700 text-white text-sm rounded transition-colors"
                         title="Set as default"
                       >
                         Set as default
                       </button>
                       <button
-                        @click="editCustomApi(index)"
+                        @click="editCustomApi(settings.customApis.findIndex(a => a === api))"
                         class="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded transition-colors"
                         title="Edit"
                       >
                         Edit
                       </button>
                       <button
-                        @click="cloneCustomApi(index)"
+                        @click="cloneCustomApi(settings.customApis.findIndex(a => a === api))"
                         class="px-3 py-1 bg-green-600 hover:bg-green-700 text-white text-sm rounded transition-colors"
                         title="Clone"
                       >
                         Clone
                       </button>
                       <button
-                        @click="deleteCustomApi(index)"
+                        @click="deleteCustomApi(settings.customApis.findIndex(a => a === api))"
                         class="px-3 py-1 bg-red-600 hover:bg-red-700 text-white text-sm rounded transition-colors"
                         title="Delete"
                       >
@@ -948,7 +967,7 @@ const handleClose = () => {
             <!-- Providers Grid -->
             <div v-if="settings.providers.length > 0" class="space-y-2">
               <div 
-                v-for="(provider, index) in settings.providers" 
+                v-for="provider in sortedProviders" 
                 :key="provider.id" 
                 class="p-4 rounded-lg border bg-gray-800 border-gray-600 hover:border-gray-500 transition-all"
               >
@@ -975,14 +994,14 @@ const handleClose = () => {
                       Set as default
                     </button>
                     <button
-                      @click="editProvider(index)"
+                      @click="editProvider(settings.providers.findIndex(p => p.id === provider.id))"
                       class="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded transition-colors"
                       title="Edit"
                     >
                       Edit
                     </button>
                     <button
-                      @click="deleteProvider(index)"
+                      @click="deleteProvider(settings.providers.findIndex(p => p.id === provider.id))"
                       class="px-3 py-1 bg-red-600 hover:bg-red-700 text-white text-sm rounded transition-colors"
                       title="Delete"
                     >
@@ -1172,7 +1191,7 @@ const handleClose = () => {
             <!-- Custom Prompts Grid -->
             <div v-if="settings.systemPrompts.length > 0" class="space-y-2">
               <div 
-                v-for="(prompt, index) in settings.systemPrompts" 
+                v-for="prompt in sortedSystemPrompts" 
                 :key="prompt.id" 
                 class="p-4 rounded-lg border bg-gray-800 border-gray-600 hover:border-gray-500 transition-all"
               >
@@ -1199,14 +1218,14 @@ const handleClose = () => {
                       Set as default
                     </button>
                     <button
-                      @click="editSystemPrompt(index)"
+                      @click="editSystemPrompt(settings.systemPrompts.findIndex(p => p.id === prompt.id))"
                       class="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded transition-colors"
                       title="Edit"
                     >
                       Edit
                     </button>
                     <button
-                      @click="deleteSystemPrompt(index)"
+                      @click="deleteSystemPrompt(settings.systemPrompts.findIndex(p => p.id === prompt.id))"
                       class="px-3 py-1 bg-red-600 hover:bg-red-700 text-white text-sm rounded transition-colors"
                       title="Delete"
                     >

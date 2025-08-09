@@ -79,6 +79,21 @@ const getProviderById = (id) => {
   return props.currentSettings.providers?.find(p => p.id === id);
 };
 
+// Computed properties for alphabetically sorted lists
+const sortedCustomApis = computed(() => {
+  if (!props.currentSettings.customApis) return [];
+  return [...props.currentSettings.customApis].sort((a, b) => 
+    a.name.toLowerCase().localeCompare(b.name.toLowerCase())
+  );
+});
+
+const sortedSystemPrompts = computed(() => {
+  if (!props.getAllSystemPrompts) return [];
+  return [...props.getAllSystemPrompts].sort((a, b) => 
+    a.name.toLowerCase().localeCompare(b.name.toLowerCase())
+  );
+});
+
 // Close dropdown when clicking outside
 const handleClickOutside = (event) => {
   if (!event.target.closest('.quick-settings-container')) {
@@ -158,11 +173,11 @@ onUnmounted(() => {
           <div v-if="currentSettings.customApis && currentSettings.customApis.length > 0">
             <div class="px-4 py-2 text-xs font-medium text-gray-400 bg-gray-900">Custom APIs</div>
             <button
-              v-for="(api, index) in currentSettings.customApis"
-              :key="index"
-              @click="selectModel(index)"
+              v-for="api in sortedCustomApis"
+              :key="api.name"
+              @click="selectModel(currentSettings.customApis.findIndex(a => a === api))"
               class="w-full px-4 py-3 text-left text-sm hover:bg-gray-700"
-              :class="currentSettings.provider === 'custom' && currentSettings.selectedCustomApi === index ? 'bg-blue-600/20 text-blue-200' : 'text-gray-200'"
+              :class="currentSettings.provider === 'custom' && currentSettings.selectedCustomApi === currentSettings.customApis.findIndex(a => a === api) ? 'bg-blue-600/20 text-blue-200' : 'text-gray-200'"
             >
               <div class="font-medium">{{ api.name }}</div>
               <div class="text-xs text-gray-400">
@@ -205,7 +220,7 @@ onUnmounted(() => {
           style="transform: translateY(-50%); top: 50%;"
         >
           <button
-            v-for="prompt in getAllSystemPrompts"
+            v-for="prompt in sortedSystemPrompts"
             :key="prompt.id"
             @click="selectSystemPrompt(prompt.id)"
             class="w-full px-4 py-3 text-left text-sm hover:bg-gray-700 border-b border-gray-700 last:border-b-0"
