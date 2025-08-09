@@ -297,6 +297,11 @@ onMounted(async () => {
   loadSettings();
   await initializeChatStorage();
   // Don't initialize worker here - it will be initialized when the first chat is selected/created
+  
+  // Scroll to bottom after initial load
+  await nextTick(() => {
+    scrollToBottom();
+  });
 });
 
 onUnmounted(() => {
@@ -324,6 +329,16 @@ watch(messages, () => {
   worker.value.postMessage({ type: 'generate', data: JSON.parse(JSON.stringify(messages.value)) });
 }, { deep: true });
 
+// Watch for when we finish loading history to scroll to bottom
+watch(isLoadingHistory, (newVal, oldVal) => {
+  if (oldVal === true && newVal === false) {
+    // We just finished loading history, scroll to bottom
+    nextTick(() => {
+      scrollToBottom();
+    });
+  }
+});
+
 watch([messages, isRunning], () => {
   if (!chatContainerRef.value || !isRunning.value) return;
 
@@ -336,6 +351,15 @@ watch([messages, isRunning], () => {
     ) {
       element.scrollTop = element.scrollHeight;
     }
+  });
+});
+
+// Watch for chat changes to scroll to bottom
+watch(currentChatId, () => {
+  nextTick(() => {
+    setTimeout(() => {
+      scrollToBottom();
+    }, 500);
   });
 });
 
@@ -386,6 +410,9 @@ const loadChats = async () => {
     } else {
       // Load the first chat and its settings
       await selectChat(chats.value[0].id);
+      // Ensure we scroll to bottom after loading
+      await nextTick();
+      scrollToBottom();
     }
   } catch (error) {
     console.error('Failed to load chats:', error);
@@ -397,12 +424,24 @@ const loadCurrentChat = async () => {
   try {
     isLoadingHistory.value = true;
     messages.value = await chatStorage.getMessages(currentChatId.value);
-    await nextTick();
     isLoadingHistory.value = false;
+    await nextTick();
+    scrollToBottom();
   } catch (error) {
     console.error('Failed to load chat messages:', error);
     messages.value = [];
     isLoadingHistory.value = false;
+  }
+};
+
+const scrollToBottom = () => {
+  if (chatContainerRef.value) {
+    // Use requestAnimationFrame to ensure DOM is fully updated
+    requestAnimationFrame(() => {
+      if (chatContainerRef.value) {
+        chatContainerRef.value.scrollTop = chatContainerRef.value.scrollHeight;
+      }
+    });
   }
 };
 
@@ -433,6 +472,11 @@ const createNewChat = async () => {
     
     // Initialize worker with default settings
     initializeWorker();
+    
+    // Scroll to bottom for new chat
+    nextTick(() => {
+      scrollToBottom();
+    });
   } catch (error) {
     console.error('Failed to create new chat:', error);
   }
@@ -496,6 +540,11 @@ const selectChat = async (chatId) => {
   
   // Reinitialize worker with chat-specific settings
   initializeWorker();
+  
+  // Scroll to bottom after selecting chat
+  nextTick(() => {
+    scrollToBottom();
+  });
 };
 
 const deleteChat = async (chatId) => {
