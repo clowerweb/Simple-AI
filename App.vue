@@ -14,6 +14,9 @@ import apiWorkerUrl from './apiWorker.js?url';
 import sttWorkerUrl from './stt-worker.js?url';
 import chatStorage from './services/chatStorage.js';
 import { MicVAD } from '@ricky0123/vad-web';
+import { useTTS } from './composables/useTTS.js';
+import { segmentText } from './utils/clause-chunker.js';
+import { phonemizeText, buildTokenIdsFromPhonemes } from './utils/phoneme-utils.js';
 
 const isWebGpuAvailable = ref(false);
 const STICKY_SCROLL_THRESHOLD = 120;
@@ -75,6 +78,33 @@ const audioChunks = ref([]);
 const audioContext = ref(null);
 const isSTTProcessing = ref(false);
 const sttText = ref('');
+// TTS state and helpers
+const { init: initTTS, unlock: unlockTTS, flush: flushTTS, speakTokenIds, enqueueSilence, isReady: isTTSReady } = useTTS();
+const ttsModelSampleRate = 24000;
+
+async function ensureTTSReady() {
+  try {
+    await initTTS({ modelUrl: '/tts-model/kitten_tts_nano_v0_1.onnx', voicesJsonUrl: '/tts-model/voices.json' });
+    await unlockTTS();
+  } catch (e) {
+    console.error('TTS init error:', e);
+  }
+}
+
+async function speakDelta(delta) {
+  try {
+    const clauses = segmentText(delta);
+    for (const c of clauses) {
+      const ph = await phonemizeText(c.text);
+      const phonemeString = Array.isArray(ph) ? ph.join(' ') : ph;
+      const tokenIds = buildTokenIdsFromPhonemes(phonemeString);
+      speakTokenIds(tokenIds, { speed: 1.0, modelSampleRate: ttsModelSampleRate });
+      if (c.pauseMs > 0) enqueueSilence(c.pauseMs);
+    }
+  } catch (e) {
+    console.error('speakDelta error:', e);
+  }
+}
 
 const onEnter = async (message) => {
   const userMessage = { role: 'user', content: message };
@@ -160,6 +190,10 @@ const onMessageReceived = async (e) => {
       messages.value.push({ role: 'assistant', content: '', reasoning: '' });
       // Update last AI message index to the new message
       lastAiMessageIndex.value = messages.value.length - 1;
+      if (isRecording.value) {
+        await ensureTTSReady();
+        flushTTS();
+      }
       break;
     case 'update':
       const { output, reasoning, fullReasoning, tps: newTps, numTokens: newNumTokens, state } = e.data;
@@ -189,11 +223,19 @@ const onMessageReceived = async (e) => {
       // Force reactivity trigger
       triggerRef(messages);
 
+      // Stream to TTS when mic is active
+      if (isRecording.value && isTTSReady.value) {
+        const delta = output || '';
+        if (delta) {
+          await speakDelta(delta);
+        }
+      }
       // Test: Force a DOM update by changing a simple value
       numTokens.value = newNumTokens;
       break;
     case 'complete':
       isRunning.value = false;
+      if (isRecording.value && isTTSReady.value) enqueueSilence(120);
       if (currentChatId.value && messages.value.length > 0) {
         const lastMessage = messages.value[messages.value.length - 1];
         if (lastMessage.role === 'assistant' && lastMessage.content) {
@@ -374,6 +416,8 @@ const startContinuousRecording = async () => {
     vad.value.start();
     isRecording.value = true;
     console.log('VAD-web initialized and started');
+    // Ensure TTS is unlocked and ready to speak
+    await ensureTTSReady();
 
   } catch (error) {
     console.error('Error starting VAD recording:', error);
@@ -630,6 +674,7 @@ const toggleRecording = () => {
   if (isRecording.value) {
     userStartedRecording.value = false;
     stopContinuousRecording();
+    flushTTS();
   } else {
     userStartedRecording.value = true;
     startContinuousRecording();
@@ -727,6 +772,9 @@ onMounted(async () => {
   loadSettings();
   await initializeChatStorage();
   // Don't initialize worker here - it will be initialized when the first chat is selected/created
+
+  // Lazy-preload TTS model and voices; unlock will happen on mic start
+  initTTS({ modelUrl: '/tts-model/kitten_tts_nano_v0_1.onnx', voicesJsonUrl: '/tts-model/voices.json' }).catch(() => {});
 
   // Scroll to bottom after initial load
   await nextTick(() => {

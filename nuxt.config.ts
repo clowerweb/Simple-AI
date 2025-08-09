@@ -7,6 +7,9 @@ export default defineNuxtConfig({
   devtools: { enabled: true },
   ssr: false,
   css: ['@/assets/css/main.css', 'highlight.js/styles/atom-one-dark.css'],
+  nitro: {
+    publicAssets: [],
+  },
   vite: {
     plugins: [
       // Tailwind CSS v4 Vite plugin
