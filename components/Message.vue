@@ -11,6 +11,7 @@ import AlertIcon from './icons/AlertIcon.vue';
 import RefreshIcon from './icons/RefreshIcon.vue';
 
 const md = ref(null);
+const messageRef = ref(null);
 
 const props = defineProps({
   role: String,
@@ -21,9 +22,15 @@ const props = defineProps({
   isRetryable: Boolean,
   errorType: String,
   errorDetails: Object,
+  isLastAiMessage: Boolean
 });
 
 const emit = defineEmits(['retry']);
+
+defineExpose({
+  messageRef,
+  role: props.role
+});
 
 const showThinking = ref(true);
 
@@ -139,7 +146,7 @@ watch([thinking, answer], () => {
 </script>
 
 <template>
-  <div class="flex items-start space-x-3 sm:space-x-4 group">
+  <div ref="messageRef" class="flex items-start space-x-3 sm:space-x-4 group scroll-mt-[382px+min(200px,max(70px,20svh)))] transition-all duration-300" :style="role === 'assistant' && isLastAiMessage ? { minHeight: 'calc(100dvh - 320px)' } : {}">
     <template v-if="role === 'assistant'">
       <div class="rounded-full p-2 shadow-lg" :class="isError ? 'bg-gradient-to-br from-red-500 to-red-600' : 'bg-gradient-to-br from-blue-500 to-purple-600'">
         <AlertIcon v-if="isError" class="h-5 w-5 text-white" />

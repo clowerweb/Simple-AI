@@ -23,6 +23,8 @@ const EXAMPLES = [
 const worker = ref(null);
 const textareaRef = ref(null);
 const chatContainerRef = ref(null);
+const chatRef = ref(null);
+const bottomPaddingRef = ref(null);
 const settingsOpen = ref(false);
 const currentSettings = ref({
   provider: 'local',
@@ -42,6 +44,7 @@ const input = ref('');
 const messages = ref([]);
 const tps = ref(null);
 const numTokens = ref(null);
+const lastAiMessageIndex = ref(-1);
 
 const chats = ref([]);
 const currentChatId = ref(null);
@@ -53,6 +56,7 @@ const currentChatSelectedCustomApi = ref(null);
 
 const onEnter = async (message) => {
   const userMessage = { role: 'user', content: message };
+  const userMessageIndex = messages.value.length;
   messages.value.push(userMessage);
   
   if (currentChatId.value) {
@@ -67,6 +71,10 @@ const onEnter = async (message) => {
   tps.value = null;
   isRunning.value = true;
   input.value = '';
+  
+  // Scroll to the user's message after it's added
+  await nextTick();
+  scrollToUserMessage(userMessageIndex);
 };
 
 const handleEnter = () => {
@@ -114,6 +122,8 @@ const onMessageReceived = async (e) => {
       break;
     case 'start':
       messages.value.push({ role: 'assistant', content: '', reasoning: '' });
+      // Update last AI message index to the new message
+      lastAiMessageIndex.value = messages.value.length - 1;
       break;
     case 'update':
       const { output, reasoning, fullReasoning, tps: newTps, numTokens: newNumTokens, state } = e.data;
@@ -183,6 +193,9 @@ const onMessageReceived = async (e) => {
             ...messages.value.slice(0, errorMessageIndex),
             errorMessage
           ];
+          
+          // Update last AI message index to the error message
+          lastAiMessageIndex.value = errorMessageIndex;
         } else {
           // Handle simple string errors (backward compatibility)
           const errorMessage = {
@@ -198,6 +211,9 @@ const onMessageReceived = async (e) => {
             ...messages.value.slice(0, errorMessageIndex),
             errorMessage
           ];
+          
+          // Update last AI message index to the error message
+          lastAiMessageIndex.value = errorMessageIndex;
         }
         
         // Save the error message to IndexedDB
@@ -339,6 +355,14 @@ watch(isLoadingHistory, (newVal, oldVal) => {
   }
 });
 
+// Watch for messages changes to adjust padding during AI response
+watch(messages, () => {
+  if (isRunning.value && chatContainerRef.value) {
+    // Adjust padding as AI response grows
+    adjustBottomPadding();
+  }
+}, { deep: true });
+
 watch([messages, isRunning], () => {
   if (!chatContainerRef.value || !isRunning.value) return;
 
@@ -424,12 +448,22 @@ const loadCurrentChat = async () => {
   try {
     isLoadingHistory.value = true;
     messages.value = await chatStorage.getMessages(currentChatId.value);
+    // Reset last AI message index
+    lastAiMessageIndex.value = -1;
+    // Find the last AI message if any
+    for (let i = messages.value.length - 1; i >= 0; i--) {
+      if (messages.value[i].role === 'assistant') {
+        lastAiMessageIndex.value = i;
+        break;
+      }
+    }
     isLoadingHistory.value = false;
     await nextTick();
     scrollToBottom();
   } catch (error) {
     console.error('Failed to load chat messages:', error);
     messages.value = [];
+    lastAiMessageIndex.value = -1;
     isLoadingHistory.value = false;
   }
 };
@@ -438,12 +472,57 @@ const scrollToBottom = () => {
   if (chatContainerRef.value) {
     // Use requestAnimationFrame to ensure DOM is fully updated
     requestAnimationFrame(() => {
-      if (chatContainerRef.value) {
-        chatContainerRef.value.scrollTop = chatContainerRef.value.scrollHeight;
-      }
+      // Add a small delay to ensure content is fully rendered
+      setTimeout(() => {
+        if (chatContainerRef.value) {
+          chatContainerRef.value.scrollTop = chatContainerRef.value.scrollHeight;
+        }
+      }, 10);
     });
   }
 };
+
+const scrollToUserMessage = (messageIndex) => {
+  if (chatContainerRef.value && chatRef.value && chatRef.value.messageRefs[messageIndex]) {
+    const messageElement = chatRef.value.messageRefs[messageIndex].messageRef;
+    if (messageElement) {
+      // Use requestAnimationFrame to ensure DOM is fully updated
+      requestAnimationFrame(() => {
+        // Add a small delay to ensure content is fully rendered
+        setTimeout(() => {
+          if (chatContainerRef.value && messageElement) {
+            // Scroll to the user message
+            chatContainerRef.value.scrollTop = messageElement.offsetTop;
+            
+            // Add padding to the bottom to ensure there's room for the AI response
+            adjustBottomPadding();
+          }
+        }, 10);
+      });
+    }
+  }
+};
+
+const adjustBottomPadding = () => {
+  // Add padding to the bottom of the chat container to ensure there's room for the AI response
+  if (bottomPaddingRef.value) {
+    // Calculate the height of the viewport minus some space for the input area
+    const viewportHeight = window.innerHeight;
+    const inputAreaHeight = 300; // Approximate height of input area and stats
+    const desiredPadding = Math.max(viewportHeight - inputAreaHeight, 200);
+    
+    // Set the height of the padding element
+    bottomPaddingRef.value.style.height = `${desiredPadding}px`;
+  }
+};
+
+// Reset padding when AI response is complete
+watch(isRunning, (newVal) => {
+  if (!newVal && bottomPaddingRef.value) {
+    // Reset padding when AI response is complete
+    bottomPaddingRef.value.style.height = '0px';
+  }
+});
 
 const createNewChat = async () => {
   try {
@@ -453,6 +532,7 @@ const createNewChat = async () => {
     chats.value.unshift(newChat);
     currentChatId.value = newChat.id;
     messages.value = [];
+    lastAiMessageIndex.value = -1;
     tps.value = null;
     numTokens.value = null;
     
@@ -734,7 +814,8 @@ const retryLastMessage = async () => {
         <!-- Chat Messages -->
         <div ref="chatContainerRef" class="flex-1 overflow-y-auto scrollbar-thin">
           <div class="max-w-[960px] mx-auto w-full">
-            <Chat :messages="messages" @retry="retryLastMessage" />
+            <Chat ref="chatRef" :messages="messages" :lastAiMessageIndex="lastAiMessageIndex" @retry="retryLastMessage" />
+            <div ref="bottomPaddingRef" class="h-0"></div>
 
             <div v-if="messages.length === 0" class="flex flex-col items-center justify-center p-8">
               <div class="mb-8">

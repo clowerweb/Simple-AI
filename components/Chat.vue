@@ -1,14 +1,30 @@
 <script setup>
-import { computed } from 'vue';
+import { ref, computed, nextTick } from 'vue';
 import Message from './Message.vue';
 
 const props = defineProps({
   messages: Array,
+  lastAiMessageIndex: Number
 });
 
 const emit = defineEmits(['retry']);
 
 const empty = computed(() => props.messages.length === 0);
+
+// Refs for messages
+const messageRefs = ref([]);
+
+// Function to set message refs
+const setMessageRef = (el, index) => {
+  if (el) {
+    messageRefs.value[index] = el;
+  }
+};
+
+// Expose message refs
+defineExpose({
+  messageRefs
+});
 </script>
 
 <template>
@@ -28,6 +44,7 @@ const empty = computed(() => props.messages.length === 0);
       <Message 
         v-for="(msg, i) in messages" 
         :key="`message-${i}`" 
+        :ref="(el) => setMessageRef(el, i)"
         :role="msg.role" 
         :content="msg.content" 
         :reasoning="msg.reasoning"
@@ -36,6 +53,7 @@ const empty = computed(() => props.messages.length === 0);
         :isRetryable="msg.isRetryable"
         :errorType="msg.errorType"
         :errorDetails="msg.errorDetails"
+        :isLastAiMessage="i === lastAiMessageIndex"
         @retry="emit('retry')"
       />
     </template>
