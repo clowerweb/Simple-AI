@@ -891,7 +891,7 @@ const handleClose = () => {
                         </button>
                         <button
                           @click="cloneCustomApi(settings.customApis.findIndex(a => a === api))"
-                          class="px-3 py-1 bg-green-600 hover:bg-green-700 text-white text-sm rounded transition-colors"
+                          class="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded transition-colors"
                           title="Clone"
                         >
                           Clone
@@ -1996,13 +1996,6 @@ const handleClose = () => {
       <!-- Footer -->
       <div class="flex items-center justify-between p-6 border-t border-white/10">
         <p class="text-sm text-gray-400">Settings are saved automatically</p>
-        <button
-          @click="handleClose"
-          :disabled="!canSave"
-          class="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
-        >
-          Done
-        </button>
       </div>
     </div>
   </div>
