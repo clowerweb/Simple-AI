@@ -29,6 +29,7 @@ const currentSettings = ref({
   localModel: 'onnx-community/Qwen3-4B-ONNX',
   customApis: [],
   selectedCustomApi: null,
+  defaultCustomApi: null,
   systemPrompts: []
 });
 
@@ -349,7 +350,7 @@ const loadModel = () => {
     worker.value.postMessage({ 
       type: 'load', 
       data: effectiveSettings.value.localModel,
-      systemPrompt: getCurrentSystemPrompt.value
+      systemPrompt: JSON.parse(JSON.stringify(getCurrentSystemPrompt.value))
     });
   } else {
     worker.value.postMessage({ 
@@ -420,8 +421,15 @@ const createNewChat = async () => {
     currentSystemPromptId.value = defaultPromptId;
     
     // Apply default provider and model settings for new chats
-    currentChatProvider.value = currentSettings.value.provider || 'local';
-    currentChatSelectedCustomApi.value = currentSettings.value.selectedCustomApi || null;
+    if (currentSettings.value.defaultCustomApi !== null) {
+      // Use default custom API if one is set
+      currentChatProvider.value = 'custom';
+      currentChatSelectedCustomApi.value = currentSettings.value.defaultCustomApi;
+    } else {
+      // Fall back to local model
+      currentChatProvider.value = 'local';
+      currentChatSelectedCustomApi.value = null;
+    }
     
     // Initialize worker with default settings
     initializeWorker();
@@ -451,20 +459,35 @@ const selectChat = async (chatId) => {
         currentChatSelectedCustomApi.value = chat.selectedCustomApi || null;
       } else {
         // Use default settings for chats created before this feature
-        currentChatProvider.value = currentSettings.value.provider || 'local';
-        currentChatSelectedCustomApi.value = currentSettings.value.selectedCustomApi || null;
+        if (currentSettings.value.defaultCustomApi !== null) {
+          currentChatProvider.value = 'custom';
+          currentChatSelectedCustomApi.value = currentSettings.value.defaultCustomApi;
+        } else {
+          currentChatProvider.value = 'local';
+          currentChatSelectedCustomApi.value = null;
+        }
       }
     } else {
       // Fallback to user's defaults
       currentSystemPromptId.value = currentSettings.value.defaultSystemPrompt || '';
-      currentChatProvider.value = currentSettings.value.provider || 'local';
-      currentChatSelectedCustomApi.value = currentSettings.value.selectedCustomApi || null;
+      if (currentSettings.value.defaultCustomApi !== null) {
+        currentChatProvider.value = 'custom';
+        currentChatSelectedCustomApi.value = currentSettings.value.defaultCustomApi;
+      } else {
+        currentChatProvider.value = 'local';
+        currentChatSelectedCustomApi.value = null;
+      }
     }
   } catch (error) {
     console.error('Failed to load chat settings:', error);
     currentSystemPromptId.value = currentSettings.value.defaultSystemPrompt || '';
-    currentChatProvider.value = currentSettings.value.provider || 'local';
-    currentChatSelectedCustomApi.value = currentSettings.value.selectedCustomApi || null;
+    if (currentSettings.value.defaultCustomApi !== null) {
+      currentChatProvider.value = 'custom';
+      currentChatSelectedCustomApi.value = currentSettings.value.defaultCustomApi;
+    } else {
+      currentChatProvider.value = 'local';
+      currentChatSelectedCustomApi.value = null;
+    }
   }
   
   await loadCurrentChat();
