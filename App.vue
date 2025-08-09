@@ -556,6 +556,19 @@ const getCurrentModelName = computed(() => {
   return 'No Model';
 });
 
+const getCurrentProviderName = computed(() => {
+  if (currentChatProvider.value === 'local') {
+    return 'Local';
+  } else if (currentChatProvider.value === 'custom' && currentChatSelectedCustomApi.value !== null) {
+    const api = currentSettings.value.customApis[currentChatSelectedCustomApi.value];
+    const providers = currentSettings.value.providers;
+    const currentProvider = providers.filter((p) => p.id === api.providerId);
+
+    return currentProvider.length ? currentProvider[0].name : 'No Provider';
+  }
+  return 'No Model';
+});
+
 // Computed property that combines global settings with per-chat overrides
 const effectiveSettings = computed(() => {
   return {
@@ -733,7 +746,7 @@ const retryLastMessage = async () => {
                 />
               </div>
               <div class="text-xs text-gray-500">
-                {{ getCurrentSystemPrompt?.name || 'No prompt' }} • {{ getCurrentModelName }}
+                {{ getCurrentSystemPrompt?.name || 'No prompt' }} • {{ getCurrentModelName }} • {{ getCurrentProviderName }}
               </div>
             </div>
           </div>
