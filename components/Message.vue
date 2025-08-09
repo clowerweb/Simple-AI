@@ -146,14 +146,18 @@ watch([thinking, answer], () => {
 </script>
 
 <template>
-  <div ref="messageRef" class="flex items-start space-x-3 sm:space-x-4 group scroll-mt-[382px+min(200px,max(70px,20svh)))] transition-all duration-300" :style="role === 'assistant' && isLastAiMessage ? { minHeight: 'calc(100dvh - 320px)' } : {}">
+  <div ref="messageRef" class="relative scroll-mt-[382px+min(200px,max(70px,20svh)))] transition-all duration-300 pl-2 pt-2" :style="role === 'assistant' && isLastAiMessage ? { minHeight: 'calc(100dvh - 320px)' } : {}">
     <template v-if="role === 'assistant'">
-      <div class="rounded-full p-2 shadow-lg" :class="isError ? 'bg-gradient-to-br from-red-500 to-red-600' : 'bg-gradient-to-br from-blue-500 to-purple-600'">
+      <div class="rounded-full p-2 shadow-lg w-9 h-9 absolute left-0 top-0 z-50" :class="isError ? 'bg-gradient-to-br from-red-500 to-red-600' : 'bg-gradient-to-br from-blue-500 to-purple-600'">
         <AlertIcon v-if="isError" class="h-5 w-5 text-white" />
         <BotIcon v-else class="h-5 w-5 text-white" />
       </div>
 
-      <div ref="md" class="rounded-2xl p-4 sm:p-5 shadow-2xl w-full max-w-full sm:max-w-3xl transition-all duration-300" :class="isError ? 'bg-gradient-to-r from-red-900/20 to-red-800/20 border border-red-600/30' : 'glass-bubble'">
+      <div
+        ref="md"
+        class="rounded-2xl pt-6 pr-4 pb-4 pl-6 shadow-2xl w-full max-w-full transition-all duration-300"
+        :class="isError ? 'bg-gradient-to-r from-red-900/20 to-red-800/20 border border-red-600/30' : 'glass-bubble'"
+      >
         <div class="min-h-6 overflow-wrap-anywhere" :class="isError ? 'text-red-200' : 'text-gray-200'">
           <template v-if="isError">
             <!-- Error Message Display -->
@@ -216,11 +220,11 @@ watch([thinking, answer], () => {
       </div>
     </template>
     <template v-else>
-      <div class="bg-gradient-to-br from-green-500 to-blue-500 rounded-full p-2 shadow-lg">
+      <div class="bg-gradient-to-br from-green-500 to-blue-500 rounded-full p-2 shadow-lg w-9 h-9 absolute left-0 top-0 z-50">
         <UserIcon class="h-5 w-5 text-white" />
       </div>
 
-      <div class="bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-2xl p-4 shadow-xl max-w-full sm:max-w-xl transition-all duration-300 border border-blue-400/20">
+      <div class="bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-2xl pt-6 pr-4 pb-4 pl-6 shadow-xl max-w-full sm:max-w-2xl transition-all duration-300 border border-blue-400/20">
         <div class="min-h-6 overflow-wrap-anywhere">{{ content }}</div>
       </div>
     </template>
