@@ -8,9 +8,12 @@ import QuickSettings from './components/QuickSettings.vue';
 import ArrowRightIcon from './components/icons/ArrowRightIcon.vue';
 import StopIcon from './components/icons/StopIcon.vue';
 import SettingsIcon from './components/icons/SettingsIcon.vue';
+import MicrophoneIcon from './components/icons/MicrophoneIcon.vue';
 import workerUrl from './worker.js?url';
 import apiWorkerUrl from './apiWorker.js?url';
+import sttWorkerUrl from './stt-worker.js?url';
 import chatStorage from './services/chatStorage.js';
+import { MicVAD } from '@ricky0123/vad-web';
 
 const isWebGpuAvailable = ref(false);
 const STICKY_SCROLL_THRESHOLD = 120;
@@ -21,11 +24,20 @@ const EXAMPLES = [
 ];
 
 const worker = ref(null);
+const sttWorker = ref(null);
 const textareaRef = ref(null);
 const chatContainerRef = ref(null);
 const chatRef = ref(null);
 const bottomPaddingRef = ref(null);
 const settingsOpen = ref(false);
+const pendingClassification = ref(false);
+const lastClassifiedText = ref('');
+const vad = ref(null);
+const isVoiceActive = ref(false);
+const vadGate = ref(false);
+const incompleteTimer = ref(null);
+const lastIncompleteText = ref('');
+const userStartedRecording = ref(false);
 const currentSettings = ref({
   provider: 'local',
   localModel: 'onnx-community/Qwen3-4B-ONNX',
@@ -54,11 +66,21 @@ const currentSystemPromptId = ref('');
 const currentChatProvider = ref('local');
 const currentChatSelectedCustomApi = ref(null);
 
+// STT state
+const isRecording = ref(false);
+const sttStatus = ref(null);
+const mediaRecorder = ref(null);
+const audioStream = ref(null);
+const audioChunks = ref([]);
+const audioContext = ref(null);
+const isSTTProcessing = ref(false);
+const sttText = ref('');
+
 const onEnter = async (message) => {
   const userMessage = { role: 'user', content: message };
   const userMessageIndex = messages.value.length;
   messages.value.push(userMessage);
-  
+
   if (currentChatId.value) {
     try {
       await chatStorage.saveMessage(currentChatId.value, userMessage);
@@ -67,11 +89,25 @@ const onEnter = async (message) => {
       console.error('Failed to save user message:', error);
     }
   }
-  
+
   tps.value = null;
   isRunning.value = true;
   input.value = '';
-  
+
+  // Stop recording and warm up STT worker before restarting
+  if (isRecording.value) {
+    stopContinuousRecording();
+
+    // Reset and warm up STT worker
+    if (sttWorker.value) {
+      sttWorker.value.postMessage({ type: 'reset' });
+      sttStatus.value = 'warming';
+      sttWorker.value.postMessage({ type: 'warmup' });
+    }
+  }
+
+  sttText.value = '';
+
   // Scroll to the user's message after it's added
   await nextTick();
   scrollToUserMessage(userMessageIndex);
@@ -131,15 +167,15 @@ const onMessageReceived = async (e) => {
       numTokens.value = newNumTokens;
       const lastMessageIndex = messages.value.length - 1;
       const lastMessage = messages.value[lastMessageIndex];
-      
+
       if (lastMessage.answerIndex === undefined && state === 'answering') {
         lastMessage.answerIndex = lastMessage.content.length;
       }
-      
+
       // Try multiple approaches to force Vue reactivity
       const newContent = lastMessage.content + (output || '');
       const newReasoning = fullReasoning || (lastMessage.reasoning + (reasoning || ''));
-      
+
       // Approach 1: Replace the entire array
       messages.value = [
         ...messages.value.slice(0, lastMessageIndex),
@@ -149,10 +185,10 @@ const onMessageReceived = async (e) => {
           reasoning: newReasoning
         }
       ];
-      
+
       // Force reactivity trigger
       triggerRef(messages);
-      
+
       // Test: Force a DOM update by changing a simple value
       numTokens.value = newNumTokens;
       break;
@@ -172,7 +208,7 @@ const onMessageReceived = async (e) => {
       break;
     case 'error':
       isRunning.value = false;
-      
+
       // Replace the last assistant message (the placeholder) with the error message
       const errorMessageIndex = messages.value.length - 1;
       if (errorMessageIndex >= 0 && messages.value[errorMessageIndex].role === 'assistant') {
@@ -187,13 +223,13 @@ const onMessageReceived = async (e) => {
             errorType: errorData.errorType,
             errorDetails: errorData.details
           };
-          
+
           // Replace the placeholder message
           messages.value = [
             ...messages.value.slice(0, errorMessageIndex),
             errorMessage
           ];
-          
+
           // Update last AI message index to the error message
           lastAiMessageIndex.value = errorMessageIndex;
         } else {
@@ -205,17 +241,17 @@ const onMessageReceived = async (e) => {
             isRetryable: true,
             errorType: 'unknown'
           };
-          
+
           // Replace the placeholder message
           messages.value = [
             ...messages.value.slice(0, errorMessageIndex),
             errorMessage
           ];
-          
+
           // Update last AI message index to the error message
           lastAiMessageIndex.value = errorMessageIndex;
         }
-        
+
         // Save the error message to IndexedDB
         if (currentChatId.value) {
           try {
@@ -234,6 +270,372 @@ const onErrorReceived = (e) => {
   console.error('Worker error:', e);
 };
 
+// STT message handlers
+const onSTTMessageReceived = (e) => {
+  switch (e.data.status) {
+    case 'loading':
+      sttStatus.value = 'loading';
+      break;
+    case 'ready':
+      sttStatus.value = 'ready';
+
+      // If user manually started recording and we were warming up after a message send, restart recording
+      if (userStartedRecording.value && !isRecording.value) {
+        startContinuousRecording();
+      }
+      break;
+    case 'start':
+      // STT generation started
+      isSTTProcessing.value = true;
+      break;
+    case 'update':
+      // Real-time STT text updates (streaming)
+      const { tps: sttTps } = e.data;
+      // Can show TPS if needed
+      break;
+    case 'complete':
+      // Generation complete - replace text completely
+      isSTTProcessing.value = false;
+      const output = e.data.output;
+      // Extract the text string from the array
+      const text = Array.isArray(output) ? output[0] : output || '';
+      sttText.value = text;
+
+      // Update input box to show STT text
+      if (isRecording.value) {
+        input.value = sttText.value;
+        resizeInput();
+
+        // Trigger classification on the newly transcribed text
+        if (sttText.value.trim()) {
+          console.log('Triggering classification for new transcription:', sttText.value);
+          tryClassification(sttText.value);
+        }
+      }
+      break;
+    case 'error':
+      console.error('STT Worker error:', e.data.data);
+      isSTTProcessing.value = false;
+      break;
+  }
+};
+
+const onSTTErrorReceived = (e) => {
+  console.error('STT Worker error:', e);
+};
+
+// STT constants and functions
+const WHISPER_SAMPLING_RATE = 16000;
+const MAX_AUDIO_LENGTH = 30; // seconds
+const MAX_SAMPLES = WHISPER_SAMPLING_RATE * MAX_AUDIO_LENGTH;
+
+const startContinuousRecording = async () => {
+  try {
+    if (isRecording.value) return;
+
+    // Initialize VAD-web
+    vad.value = await MicVAD.new({
+      onSpeechStart: () => {
+        console.log('🎤 Voice detected - starting utterance recording');
+        isVoiceActive.value = true;
+        vadGate.value = true;
+
+        // Clear any incomplete timeout
+        if (incompleteTimer.value) {
+          clearTimeout(incompleteTimer.value);
+          incompleteTimer.value = null;
+        }
+
+        // Reset for new utterance
+        sttText.value = '';
+        audioChunks.value = [];
+
+        // Start recording for this utterance
+        startWhisperRecording();
+      },
+
+      onSpeechEnd: () => {
+        console.log('🔇 Voice stopped - processing complete utterance');
+        isVoiceActive.value = false;
+        vadGate.value = false;
+
+        // Stop recording and process the complete utterance
+        stopAndProcessUtterance();
+      },
+
+      // Configuration
+      preSpeechPadFrames: 70,
+      positiveSpeechThreshold: 0.5,
+      negativeSpeechThreshold: 0.35,
+      redemptionFrames: 8,
+    });
+
+    // Start VAD
+    vad.value.start();
+    isRecording.value = true;
+    console.log('VAD-web initialized and started');
+
+  } catch (error) {
+    console.error('Error starting VAD recording:', error);
+  }
+};
+
+const startWhisperRecording = async () => {
+  if (mediaRecorder.value && mediaRecorder.value.state === 'recording') return;
+
+  try {
+    // Get user media for Whisper (if not already available)
+    if (!audioStream.value) {
+      audioStream.value = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          echoCancellation: false,
+          noiseSuppression: true,
+          autoGainControl: false
+        }
+      });
+    }
+
+    // Create audio context with Whisper sampling rate (reuse if exists)
+    if (!audioContext.value || audioContext.value.state === 'closed') {
+      audioContext.value = new AudioContext({
+        sampleRate: WHISPER_SAMPLING_RATE,
+      });
+    }
+
+    // Create recorder with explicit options for better compatibility
+    const options = {};
+    if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+      options.mimeType = 'audio/webm;codecs=opus';
+    } else if (MediaRecorder.isTypeSupported('audio/webm')) {
+      options.mimeType = 'audio/webm';
+    } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
+      options.mimeType = 'audio/mp4';
+    }
+
+    mediaRecorder.value = new MediaRecorder(audioStream.value, options);
+
+    mediaRecorder.value.onstart = () => {
+      console.log('Recording utterance started');
+    };
+
+    mediaRecorder.value.ondataavailable = (e) => {
+      // Collect all chunks for this utterance
+      if (e.data && e.data.size > 0) {
+        console.log('Audio chunk received:', e.data.size, 'bytes, type:', e.data.type);
+        audioChunks.value.push(e.data);
+      }
+    };
+
+    mediaRecorder.value.onerror = (e) => {
+      console.error('MediaRecorder error:', e.error);
+    };
+
+    // Start recording without timeslice - get one complete container
+    mediaRecorder.value.start();
+
+  } catch (error) {
+    console.error('Error starting Whisper recording:', error);
+  }
+};
+
+const stopAndProcessUtterance = async () => {
+  if (!mediaRecorder.value || mediaRecorder.value.state !== 'recording') return;
+
+  // Set up the onstop handler before stopping
+  mediaRecorder.value.onstop = async () => {
+    try {
+      console.log('Processing complete utterance with', audioChunks.value.length, 'chunks');
+
+      if (audioChunks.value.length === 0) {
+        console.warn('No audio chunks recorded');
+        return;
+      }
+
+      const mimeType = mediaRecorder.value.mimeType || audioChunks.value[0]?.type || 'audio/webm;codecs=opus';
+      const finalBlob = new Blob(audioChunks.value, { type: mimeType });
+
+      console.log('Final utterance blob:', finalBlob.size, 'bytes, type:', finalBlob.type);
+
+      if (finalBlob.size < 1000) {
+        console.warn('Utterance blob too small:', finalBlob.size);
+        return;
+      }
+
+      const arrayBuffer = await finalBlob.arrayBuffer();
+      if (!arrayBuffer.byteLength) {
+        console.warn('Empty utterance buffer');
+        return;
+      }
+
+      const decoded = await audioContext.value.decodeAudioData(arrayBuffer);
+      let audio = decoded.getChannelData(0);
+
+      console.log('Decoded utterance:', audio.length, 'samples at', decoded.sampleRate, 'Hz');
+
+      if (audio.length < 1600) {
+        console.warn('Utterance too short:', audio.length, 'samples');
+        return;
+      }
+
+      if (audio.length > MAX_SAMPLES) {
+        audio = audio.slice(-MAX_SAMPLES);
+      }
+
+      console.log('Sending complete utterance to STT:', audio.length, 'samples');
+      sttWorker.value.postMessage({
+        type: 'generate',
+        data: { audio, language: 'en' }
+      });
+
+    } catch (error) {
+      console.error('Error processing utterance:', error);
+    } finally {
+      // Clean up for next utterance
+      audioChunks.value = [];
+    }
+  };
+
+  // Stop the recording
+  mediaRecorder.value.stop();
+};
+
+const tryClassification = (text) => {
+  if (text !== lastClassifiedText.value && !pendingClassification.value) {
+    console.log('🔍 Classifying:', text);
+    pendingClassification.value = true;
+    lastClassifiedText.value = text;
+
+    // Simple rule-based classification for complete sentences
+    const isComplete = classifyMessageCompleteness(text);
+
+    setTimeout(() => {
+      pendingClassification.value = false;
+      if (isComplete && text.trim().length > 2) {
+        console.log('✅ Complete - auto-sending:', text);
+        // Clear any incomplete timer
+        if (incompleteTimer.value) {
+          clearTimeout(incompleteTimer.value);
+          incompleteTimer.value = null;
+        }
+        // Auto-send the message
+        onEnter(text);
+      } else {
+        // Handle incomplete message with 3s timeout
+        handleIncompleteMessage(text);
+      }
+    }, 500);
+  }
+};
+
+// Simple rule-based classifier to determine if a message is complete
+const classifyMessageCompleteness = (text) => {
+  const trimmed = text.trim().toLowerCase();
+
+  // Skip blank audio or very short texts
+  if (trimmed.length < 2 || trimmed === '[blank_audio]' || trimmed === '') {
+    return false;
+  }
+
+  // Check for sentence-ending punctuation
+  if (/[.!?]\s*$/.test(trimmed)) {
+    return true;
+  }
+
+  // Check for common complete phrases/greetings
+  const completePatterns = [
+    /^(hello|hi|hey|good morning|good afternoon|good evening)$/,
+    /^(thank you|thanks|bye|goodbye|see you)$/,
+    /^(yes|no|ok|okay|sure|alright)$/,
+    /^(help|test|testing)$/,
+    /^what is/,
+    /^how do/,
+    /^can you/,
+    /^please/,
+    /^tell me/,
+    /^show me/,
+    /^explain/,
+    /^write/,
+    /^create/,
+    /^make/,
+    /^solve/,
+    /^calculate/,
+    /^find/
+  ];
+
+  for (const pattern of completePatterns) {
+    if (pattern.test(trimmed)) {
+      return true;
+    }
+  }
+
+  // Check for questions (even without question marks)
+  if (/^(what|where|when|why|how|who|which|is|are|can|will|would|could|should|do|does|did)\b/.test(trimmed)) {
+    return true;
+  }
+
+  // Check for commands/requests
+  if (/^(let me|give me|send|open|close|start|stop|play|pause)\b/.test(trimmed)) {
+    return true;
+  }
+
+  // If it's a longer phrase (5+ words), likely complete
+  if (trimmed.split(/\s+/).length >= 5) {
+    return true;
+  }
+
+  return false;
+};
+
+const handleIncompleteMessage = (text) => {
+  console.log('❌ Message incomplete, setting 3s timeout...');
+  lastIncompleteText.value = text;
+
+  // Set 3-second timer to bypass classifier if no new speech
+  incompleteTimer.value = setTimeout(() => {
+    if (!isVoiceActive.value && lastIncompleteText.value === input.value) {
+      console.log('⏰ 3s timeout - sending incomplete message anyway:', text);
+      onEnter(text);
+    }
+  }, 3000);
+};
+
+const stopContinuousRecording = () => {
+  if (vad.value) {
+    vad.value.pause();
+    vad.value = null;
+  }
+  if (mediaRecorder.value) {
+    mediaRecorder.value.stop();
+    mediaRecorder.value = null;
+  }
+  if (audioStream.value) {
+    audioStream.value.getTracks().forEach(track => track.stop());
+    audioStream.value = null;
+  }
+  if (audioContext.value) {
+    audioContext.value.close().catch(() => {});
+    audioContext.value = null;
+  }
+  if (incompleteTimer.value) {
+    clearTimeout(incompleteTimer.value);
+    incompleteTimer.value = null;
+  }
+  isRecording.value = false;
+  isVoiceActive.value = false;
+  vadGate.value = false;
+};
+
+const toggleRecording = () => {
+  if (isRecording.value) {
+    userStartedRecording.value = false;
+    stopContinuousRecording();
+  } else {
+    userStartedRecording.value = true;
+    startContinuousRecording();
+  }
+};
+
 const initializeWorker = () => {
   if (worker.value) {
     worker.value.removeEventListener('message', onMessageReceived);
@@ -243,13 +645,25 @@ const initializeWorker = () => {
 
   // Choose worker based on provider type
   const workerType = effectiveSettings.value.provider === 'local' ? workerUrl : apiWorkerUrl;
-  
+
   worker.value = new Worker(workerType, {
     type: 'module',
   });
 
   worker.value.addEventListener('message', onMessageReceived);
   worker.value.addEventListener('error', onErrorReceived);
+
+  // Initialize STT worker if not already done
+  if (!sttWorker.value) {
+    sttWorker.value = new Worker(sttWorkerUrl, {
+      type: 'module',
+    });
+    sttWorker.value.addEventListener('message', onSTTMessageReceived);
+    sttWorker.value.addEventListener('error', onSTTErrorReceived);
+
+    // Load STT model
+    sttWorker.value.postMessage({ type: 'load' });
+  }
 
   if (effectiveSettings.value.provider === 'local') {
     worker.value.postMessage({ type: 'check' });
@@ -282,7 +696,7 @@ const loadSettings = () => {
 const onSettingsChanged = (newSettings) => {
   // Update current settings
   currentSettings.value = newSettings;
-  
+
   // Always reinitialize worker when settings change from Settings modal
   // This ensures the new settings take effect immediately
   status.value = null;
@@ -293,7 +707,7 @@ const onQuickSettingsChanged = async (newSettings) => {
   // Update per-chat provider settings
   currentChatProvider.value = newSettings.provider;
   currentChatSelectedCustomApi.value = newSettings.selectedCustomApi;
-  
+
   // Save the provider settings for the current chat
   if (currentChatId.value) {
     try {
@@ -302,7 +716,7 @@ const onQuickSettingsChanged = async (newSettings) => {
       console.error('Failed to save provider settings for chat:', error);
     }
   }
-  
+
   // Reinitialize worker with the new settings
   status.value = null;
   initializeWorker();
@@ -313,7 +727,7 @@ onMounted(async () => {
   loadSettings();
   await initializeChatStorage();
   // Don't initialize worker here - it will be initialized when the first chat is selected/created
-  
+
   // Scroll to bottom after initial load
   await nextTick(() => {
     scrollToBottom();
@@ -325,6 +739,12 @@ onUnmounted(() => {
     worker.value.removeEventListener('message', onMessageReceived);
     worker.value.removeEventListener('error', onErrorReceived);
   }
+  if (sttWorker.value) {
+    sttWorker.value.removeEventListener('message', onSTTMessageReceived);
+    sttWorker.value.removeEventListener('error', onSTTErrorReceived);
+  }
+  // Clean up recording
+  stopContinuousRecording();
 });
 
 watch(messages, () => {
@@ -393,16 +813,16 @@ const loadModel = () => {
     currentSystemPromptId: currentSystemPromptId.value,
     currentSystemPrompt: getCurrentSystemPrompt.value
   };
-  
+
   if (effectiveSettings.value.provider === 'local') {
-    worker.value.postMessage({ 
-      type: 'load', 
+    worker.value.postMessage({
+      type: 'load',
       data: effectiveSettings.value.localModel,
       systemPrompt: JSON.parse(JSON.stringify(getCurrentSystemPrompt.value))
     });
   } else {
-    worker.value.postMessage({ 
-      type: 'init', 
+    worker.value.postMessage({
+      type: 'init',
       data: JSON.parse(JSON.stringify(settingsWithPrompt))
     });
   }
@@ -493,7 +913,7 @@ const scrollToUserMessage = (messageIndex) => {
           if (chatContainerRef.value && messageElement) {
             // Scroll to the user message
             chatContainerRef.value.scrollTop = messageElement.offsetTop;
-            
+
             // Add padding to the bottom to ensure there's room for the AI response
             adjustBottomPadding();
           }
@@ -510,7 +930,7 @@ const adjustBottomPadding = () => {
     const viewportHeight = window.innerHeight;
     const inputAreaHeight = 300; // Approximate height of input area and stats
     const desiredPadding = Math.max(viewportHeight - inputAreaHeight, 200);
-    
+
     // Set the height of the padding element
     bottomPaddingRef.value.style.height = `${desiredPadding}px`;
   }
@@ -527,7 +947,7 @@ watch(isRunning, (newVal) => {
 const createNewChat = async () => {
   try {
     const defaultPromptId = currentSettings.value.defaultSystemPrompt || '';
-    
+
     const newChat = await chatStorage.createChat('New Chat', defaultPromptId);
     chats.value.unshift(newChat);
     currentChatId.value = newChat.id;
@@ -535,10 +955,10 @@ const createNewChat = async () => {
     lastAiMessageIndex.value = -1;
     tps.value = null;
     numTokens.value = null;
-    
+
     // Set system prompt to default for new chats
     currentSystemPromptId.value = defaultPromptId;
-    
+
     // Apply default provider and model settings for new chats
     if (currentSettings.value.defaultCustomApi !== null) {
       // Use default custom API if one is set
@@ -549,10 +969,10 @@ const createNewChat = async () => {
       currentChatProvider.value = 'local';
       currentChatSelectedCustomApi.value = null;
     }
-    
+
     // Initialize worker with default settings
     initializeWorker();
-    
+
     // Scroll to bottom for new chat
     nextTick(() => {
       scrollToBottom();
@@ -565,7 +985,7 @@ const createNewChat = async () => {
 const selectChat = async (chatId) => {
   if (chatId === currentChatId.value) return;
   currentChatId.value = chatId;
-  
+
   // Load the chat's settings (system prompt and provider/model)
   try {
     const chat = await chatStorage.getChat(chatId);
@@ -576,7 +996,7 @@ const selectChat = async (chatId) => {
       } else {
         currentSystemPromptId.value = currentSettings.value.defaultSystemPrompt || '';
       }
-      
+
       // Load provider settings - use chat-specific if available, otherwise use defaults
       if (chat.provider !== undefined) {
         currentChatProvider.value = chat.provider;
@@ -613,14 +1033,14 @@ const selectChat = async (chatId) => {
       currentChatSelectedCustomApi.value = null;
     }
   }
-  
+
   await loadCurrentChat();
   tps.value = null;
   numTokens.value = null;
-  
+
   // Reinitialize worker with chat-specific settings
   initializeWorker();
-  
+
   // Scroll to bottom after selecting chat
   nextTick(() => {
     scrollToBottom();
@@ -629,11 +1049,11 @@ const selectChat = async (chatId) => {
 
 const deleteChat = async (chatId) => {
   if (chats.value.length <= 1) return;
-  
+
   try {
     await chatStorage.deleteChat(chatId);
     chats.value = chats.value.filter(chat => chat.id !== chatId);
-    
+
     if (currentChatId.value === chatId) {
       currentChatId.value = chats.value[0].id;
       await loadCurrentChat();
@@ -689,11 +1109,11 @@ const getCurrentSystemPrompt = computed(() => {
   // First, try to get the prompt by the current chat's selection or the default setting
   const promptId = currentSystemPromptId.value || currentSettings.value.defaultSystemPrompt || '';
   const prompt = getSystemPromptById(promptId);
-  
+
   if (prompt) {
     return prompt;
   }
-  
+
   // Fallback to built-in if nothing else works
   return DEFAULT_SYSTEM_PROMPT;
 });
@@ -732,7 +1152,7 @@ const effectiveSettings = computed(() => {
 
 const setSystemPrompt = async (promptId) => {
   currentSystemPromptId.value = promptId;
-  
+
   // Save the system prompt for the current chat
   if (currentChatId.value) {
     try {
@@ -745,13 +1165,13 @@ const setSystemPrompt = async (promptId) => {
 
 const retryLastMessage = async () => {
   if (isRunning.value || messages.value.length === 0) return;
-  
+
   // Find the last error message and remove only that one
   const lastErrorIndex = messages.value.length - 1;
   if (lastErrorIndex >= 0 && messages.value[lastErrorIndex].isError) {
     // Remove only the last error message from the UI
     messages.value = messages.value.slice(0, lastErrorIndex);
-    
+
     // Update the chat in IndexedDB by removing only the last error message
     if (currentChatId.value) {
       try {
@@ -765,7 +1185,7 @@ const retryLastMessage = async () => {
         console.error('Failed to update chat during retry:', error);
       }
     }
-    
+
     // Retry generation with the remaining messages
     tps.value = null;
     isRunning.value = true;
@@ -847,7 +1267,7 @@ const retryLastMessage = async () => {
           </p>
         </div>
 
-        
+
         <!-- Input Area -->
         <div class="p-4 pt-0">
           <div class="glass-strong rounded-2xl w-full max-w-[600px] mx-auto relative shadow-2xl hover:shadow-3xl transition-all duration-300 border border-white/20 hover:border-white/30 z-50">
@@ -857,11 +1277,12 @@ const retryLastMessage = async () => {
                 id="prompt"
                 ref="textareaRef"
                 class="scrollbar-thin flex-1 px-4 py-4 bg-transparent border-none outline-none disabled:text-gray-400 text-gray-200 placeholder-gray-400 disabled:placeholder-gray-200 resize-none disabled:cursor-not-allowed"
-                placeholder="Type your message..."
+                :placeholder="isRecording ? 'Listening...' : 'Type your message...'"
                 rows="1"
                 v-model="input"
-                :disabled="status !== 'ready'"
+                :disabled="status !== 'ready' || isRecording"
                 :title="status === 'ready' ? 'Model is ready' : 'Model not loaded yet'"
+                :class="{ 'text-green-400': isRecording }"
                 @keydown.enter.prevent="handleEnter"
                 @input="resizeInput"
                 data-gramm="false"
@@ -870,9 +1291,22 @@ const retryLastMessage = async () => {
                 spellcheck="false"
                 style="max-height: 200px;"
               ></textarea>
-              
-              <!-- Send Button Container -->
-              <div class="flex items-end pb-3 pr-3">
+
+              <!-- Microphone and Send Button Container -->
+              <div class="flex items-end pb-3 pr-3 space-x-2">
+                <!-- Microphone button -->
+                <div class="cursor-pointer group" @click="toggleRecording" :disabled="sttStatus !== 'ready'">
+                  <MicrophoneIcon
+                    class="h-8 w-8 p-1 rounded-xl transition-all duration-200 shadow-md hover:shadow-xl"
+                    :class="isRecording
+                      ? 'bg-red-600 hover:bg-red-700 text-white animate-pulse shadow-red-600/25'
+                      : sttStatus === 'ready'
+                        ? 'bg-green-600 hover:bg-green-700 text-white shadow-green-600/25'
+                        : 'bg-gray-600 text-gray-400 cursor-not-allowed'"
+                  />
+                </div>
+
+                <!-- Send button -->
                 <div v-if="isRunning" class="cursor-pointer group" @click="onInterrupt">
                   <StopIcon class="h-8 w-8 p-1 rounded-xl text-red-500 hover:text-red-600 transition-colors duration-200 hover:bg-red-900/20" />
                 </div>
