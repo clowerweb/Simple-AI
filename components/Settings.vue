@@ -79,6 +79,7 @@ const showAdvancedParams = ref(false);
 
 // Preferences state
 const includeApiKeys = ref(false);
+const includeChatHistory = ref(false);
 const showClearConfirm = ref(false);
 const showImportConfirm = ref(false);
 const importFileContent = ref(null);
@@ -607,8 +608,8 @@ const togglePromptEdit = (promptId) => {
 };
 
 // Preferences functions
-const exportSettings = () => {
-  const settingsToExport = { ...settings.value };
+const exportSettings = async () => {
+  const settingsToExport = { ...settings.value }
   
   if (!includeApiKeys.value) {
     // Remove API keys from providers
@@ -621,12 +622,43 @@ const exportSettings = () => {
     }));
   }
   
+  // Include chat history if requested
+  if (includeChatHistory.value) {
+    try {
+      // Import chatStorage to access chat history
+      const chatStorage = await import('../services/chatStorage.js');
+      await chatStorage.default.init();
+      
+      // Get all chats and their messages
+      const allChats = await chatStorage.default.getAllChats();
+      const chatsWithMessages = [];
+      
+      for (const chat of allChats) {
+        const messages = await chatStorage.default.getMessages(chat.id);
+        chatsWithMessages.push({
+          ...chat,
+          messages
+        });
+      }
+      
+      settingsToExport.chatHistory = chatsWithMessages;
+    } catch (error) {
+      console.error('Failed to export chat history:', error);
+      alert('Failed to export chat history. Continuing with settings only.');
+    }
+  }
+  
   const dataStr = JSON.stringify(settingsToExport, null, 2);
   const dataUri = 'data:application/json;charset=utf-8,'+ encodeURIComponent(dataStr);
   
-  const exportFileDefaultName = includeApiKeys.value 
-    ? 'ai-chat-settings-WITH-KEYS.json' 
-    : 'ai-chat-settings.json';
+  let exportFileDefaultName = 'ai-chat-settings';
+  if (includeApiKeys.value) {
+    exportFileDefaultName += '-WITH-KEYS';
+  }
+  if (includeChatHistory.value) {
+    exportFileDefaultName += '-WITH-CHATS';
+  }
+  exportFileDefaultName += '.json';
   
   const linkElement = document.createElement('a');
   linkElement.setAttribute('href', dataUri);
@@ -654,10 +686,63 @@ const handleImportFile = (event) => {
   event.target.value = '';
 };
 
-const confirmImport = () => {
+const confirmImport = async () => {
   if (importFileContent.value) {
-    // Clear current settings and replace with imported ones
-    settings.value = { ...settings.value, ...importFileContent.value };
+    // Check if chat history is included in the import
+    const hasChatHistory = Array.isArray(importFileContent.value.chatHistory);
+    
+    // Handle chat history import if present
+    if (hasChatHistory) {
+      try {
+        const chatStorage = await import('../services/chatStorage.js');
+        await chatStorage.default.init();
+        
+        // Clear existing chats and messages
+        const existingChats = await chatStorage.default.getAllChats();
+        for (const chat of existingChats) {
+          await chatStorage.default.deleteChat(chat.id);
+        }
+        
+        // Import chats and messages
+        for (const chatWithMessages of importFileContent.value.chatHistory) {
+          const { messages, ...chatData } = chatWithMessages;
+          
+          // Create the chat
+          const transaction = chatStorage.default.db.transaction(['chats'], 'readwrite');
+          const store = transaction.objectStore('chats');
+          await new Promise((resolve, reject) => {
+            const request = store.add(chatData);
+            request.onsuccess = () => resolve();
+            request.onerror = () => reject(request.error);
+          });
+          
+          // Import messages for this chat
+          for (const message of messages) {
+            const messageWithId = {
+              id: chatStorage.default.generateId(),
+              chatId: chatData.id,
+              timestamp: new Date().toISOString(),
+              ...message
+            };
+            
+            const messageTransaction = chatStorage.default.db.transaction(['messages'], 'readwrite');
+            const messageStore = messageTransaction.objectStore('messages');
+            await new Promise((resolve, reject) => {
+              const request = messageStore.add(messageWithId);
+              request.onsuccess = () => resolve();
+              request.onerror = () => reject(request.error);
+            });
+          }
+        }
+      } catch (error) {
+        console.error('Failed to import chat history:', error);
+        alert('Failed to import chat history. Settings imported without chat history.');
+      }
+    }
+    
+    // Clear current settings and replace with imported ones (excluding chat history)
+    const { chatHistory, ...settingsToImport } = importFileContent.value;
+    settings.value = { ...settings.value, ...settingsToImport }
     
     // Ensure arrays exist
     if (!Array.isArray(settings.value.customApis)) {
@@ -676,7 +761,9 @@ const confirmImport = () => {
     showImportConfirm.value = false;
     importFileContent.value = null;
     
-    alert('Settings imported successfully!');
+    alert(hasChatHistory 
+      ? 'Settings and chat history imported successfully!' 
+      : 'Settings imported successfully!');
   }
 };
 
@@ -1872,6 +1959,26 @@ const handleClose = () => {
                 </label>
               </div>
               
+              <!-- Include Chat History Checkbox -->
+              <div class="mb-4">
+                <label class="flex items-start cursor-pointer">
+                  <input
+                    type="checkbox"
+                    v-model="includeChatHistory"
+                    class="w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 rounded mt-0.5 mr-3"
+                  />
+                  <div>
+                    <span class="text-white font-medium">Also export chat history</span>
+                    <div class="text-xs text-orange-400 mt-1 flex items-start">
+                      <svg class="w-4 h-4 mr-1 mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"></path>
+                      </svg>
+                      <span><strong>Warning:</strong> Never share exports that contain chats you'd like to keep private. Only enable this for personal backups stored securely.</span>
+                    </div>
+                  </div>
+                </label>
+              </div>
+              
               <button
                 @click="exportSettings"
                 class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors flex items-center gap-2"
@@ -1934,6 +2041,9 @@ const handleClose = () => {
           <p class="text-gray-300 mb-6">
             This will <strong class="text-white">replace all your current settings</strong> with the imported ones. 
             All existing providers, models, and system prompts will be lost.
+          </p>
+          <p v-if="importFileContent && Array.isArray(importFileContent.chatHistory)" class="text-gray-300 mb-6">
+            This import also contains <strong class="text-white">chat history</strong> which will replace your current chat history.
           </p>
           <p class="text-gray-400 text-sm mb-6">
             Are you sure you want to continue?
