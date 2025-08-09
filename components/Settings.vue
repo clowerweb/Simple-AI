@@ -925,7 +925,7 @@ const handleClose = () => {
             <!-- API List with Selection -->
             <div>
               <div class="flex items-center justify-between mb-4">
-                <h3 class="text-lg font-medium text-white">Custom APIs</h3>
+                <h3 class="text-lg font-medium text-white">Custom API Models</h3>
                 <button
                   @click="startNewApi"
                   class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors flex items-center gap-2"
@@ -933,7 +933,7 @@ const handleClose = () => {
                   <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
                   </svg>
-                  New
+                  New Model
                 </button>
               </div>
 
@@ -996,7 +996,7 @@ const handleClose = () => {
 
                   <!-- Inline Edit Form -->
                   <div v-if="expandedApiIndex === settings.customApis.findIndex(a => a === api)" class="border-t border-gray-700 p-4 bg-gray-900">
-                    <h4 class="text-md font-medium text-white mb-4">Edit API</h4>
+                    <h4 class="text-md font-medium text-white mb-4">Edit Model</h4>
                     
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <!-- Basic Settings -->
@@ -1218,14 +1218,14 @@ const handleClose = () => {
                   @click="startNewApi"
                   class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
                 >
-                  Add Your First API
+                  Add Your First Model
                 </button>
               </div>
             </div>
 
             <!-- New API Form -->
             <div v-if="showForm" class="bg-gray-800 rounded-lg p-4 border border-gray-600 mt-6" data-new-api-form>
-              <h3 class="text-lg font-medium text-white mb-4">Add New API</h3>
+              <h3 class="text-lg font-medium text-white mb-4">Add New Model</h3>
               
               <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                 <!-- Basic Settings -->
@@ -1948,7 +1948,7 @@ const handleClose = () => {
                     class="w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 rounded mt-0.5 mr-3"
                   />
                   <div>
-                    <span class="text-white font-medium">Also export API keys</span>
+                    <span class="text-white font-medium">Include API keys</span>
                     <div class="text-xs text-orange-400 mt-1 flex items-start">
                       <svg class="w-4 h-4 mr-1 mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
                         <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"></path>
@@ -1968,7 +1968,7 @@ const handleClose = () => {
                     class="w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 rounded mt-0.5 mr-3"
                   />
                   <div>
-                    <span class="text-white font-medium">Also export chat history</span>
+                    <span class="text-white font-medium">Include chat history</span>
                     <div class="text-xs text-orange-400 mt-1 flex items-start">
                       <svg class="w-4 h-4 mr-1 mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
                         <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"></path>
