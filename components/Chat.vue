@@ -4,7 +4,10 @@ import Message from './Message.vue';
 
 const props = defineProps({
   messages: Array,
-  lastAiMessageIndex: Number
+  lastAiMessageIndex: Number,
+  onSpeak: Function,
+  onStopTTS: Function,
+  isTTSSpeaking: Object
 });
 
 const emit = defineEmits(['retry']);
@@ -54,6 +57,9 @@ defineExpose({
         :errorType="msg.errorType"
         :errorDetails="msg.errorDetails"
         :isLastAiMessage="i === lastAiMessageIndex"
+        :onSpeak="onSpeak"
+        :onStopTTS="onStopTTS"
+        :isTTSSpeaking="isTTSSpeaking"
         @retry="emit('retry')"
       />
     </template>

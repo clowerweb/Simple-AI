@@ -17,6 +17,7 @@ import { MicVAD } from '@ricky0123/vad-web';
 import { useTTS } from './composables/useTTS.js';
 import { segmentText } from './utils/clause-chunker.js';
 import { phonemizeText, buildTokenIdsFromPhonemes } from './utils/phoneme-utils.js';
+import { cleanTextForTTS } from './utils/textCleaner.js';
 
 const isWebGpuAvailable = ref(false);
 const STICKY_SCROLL_THRESHOLD = 120;
@@ -79,8 +80,9 @@ const audioContext = ref(null);
 const isSTTProcessing = ref(false);
 const sttText = ref('');
 // TTS state and helpers
-const { init: initTTS, unlock: unlockTTS, flush: flushTTS, speakTokenIds, enqueueSilence, isReady: isTTSReady } = useTTS();
+const { init: initTTS, unlock: unlockTTS, flush: flushTTS, speakTokenIds, enqueueSilence, isReady: isTTSReady, isSpeaking: isTTSSpeaking } = useTTS();
 const ttsModelSampleRate = 24000;
+let currentTTSAbortController = null;
 
 async function ensureTTSReady() {
   try {
@@ -104,6 +106,67 @@ async function speakDelta(delta) {
   } catch (e) {
     console.error('speakDelta error:', e);
   }
+}
+
+async function speakText(text) {
+  try {
+    // Cancel any existing TTS process
+    if (currentTTSAbortController) {
+      currentTTSAbortController.abort();
+    }
+    
+    // Create new abort controller for this TTS session
+    currentTTSAbortController = new AbortController();
+    const abortSignal = currentTTSAbortController.signal;
+    
+    await ensureTTSReady();
+    flushTTS();
+    
+    // Clean the text for TTS (remove markdown, emojis, unwanted symbols)
+    const cleanedText = cleanTextForTTS(text);
+    console.log('Original text:', text.substring(0, 200) + '...');
+    console.log('Cleaned text:', cleanedText.substring(0, 200) + '...');
+    
+    if (!cleanedText.trim()) {
+      console.log('No readable text found after cleaning');
+      return;
+    }
+    
+    const segments = segmentText(cleanedText);
+    for (const c of segments) {
+      // Check if we've been cancelled
+      if (abortSignal.aborted) {
+        console.log('TTS cancelled');
+        return;
+      }
+      
+      const ph = await phonemizeText(c.text);
+      const phonemeString = Array.isArray(ph) ? ph.join(' ') : ph;
+      const tokenIds = buildTokenIdsFromPhonemes(phonemeString);
+      speakTokenIds(tokenIds, { speed: 1.0, modelSampleRate: ttsModelSampleRate });
+      
+      // Skip adding silence between segments to eliminate hiccups - natural pauses will come from punctuation
+      // if (c.pauseMs > 0) enqueueSilence(Math.min(c.pauseMs, 50)); // Commented out to test hiccup elimination
+    }
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      console.log('TTS was cancelled');
+    } else {
+      console.error('Error speaking text:', error);
+      throw error;
+    }
+  }
+}
+
+function stopTTS() {
+  // Cancel the TTS processing loop
+  if (currentTTSAbortController) {
+    currentTTSAbortController.abort();
+    currentTTSAbortController = null;
+  }
+  
+  // Flush the audio queue
+  flushTTS();
 }
 
 const onEnter = async (message) => {
@@ -1282,7 +1345,7 @@ const retryLastMessage = async () => {
         <!-- Chat Messages -->
         <div ref="chatContainerRef" class="flex-1 overflow-y-auto scrollbar-thin">
           <div class="max-w-[960px] mx-auto w-full">
-            <Chat ref="chatRef" :messages="messages" :lastAiMessageIndex="lastAiMessageIndex" @retry="retryLastMessage" />
+            <Chat ref="chatRef" :messages="messages" :lastAiMessageIndex="lastAiMessageIndex" :onSpeak="speakText" :onStopTTS="stopTTS" :isTTSSpeaking="isTTSSpeaking" @retry="retryLastMessage" />
             <div ref="bottomPaddingRef" class="h-0"></div>
 
             <div v-if="messages.length === 0" class="flex flex-col items-center justify-center p-8">

@@ -9,6 +9,8 @@ import BrainIcon from './icons/BrainIcon.vue';
 import UserIcon from './icons/UserIcon.vue';
 import AlertIcon from './icons/AlertIcon.vue';
 import RefreshIcon from './icons/RefreshIcon.vue';
+import SpeakerIcon from './icons/SpeakerIcon.vue';
+import PauseIcon from './icons/PauseIcon.vue';
 
 const md = ref(null);
 const messageRef = ref(null);
@@ -22,7 +24,10 @@ const props = defineProps({
   isRetryable: Boolean,
   errorType: String,
   errorDetails: Object,
-  isLastAiMessage: Boolean
+  isLastAiMessage: Boolean,
+  onSpeak: Function,
+  onStopTTS: Function,
+  isTTSSpeaking: Object
 });
 
 const emit = defineEmits(['retry']);
@@ -33,6 +38,23 @@ defineExpose({
 });
 
 const showThinking = ref(true);
+
+const handleSpeak = async () => {
+  if (!props.onSpeak || props.isError) return;
+  
+  try {
+    const textToSpeak = props.answerIndex !== undefined ? props.content.slice(props.answerIndex) : props.content;
+    await props.onSpeak(textToSpeak);
+  } catch (error) {
+    console.error('TTS error:', error);
+  }
+};
+
+const handleStopTTS = () => {
+  if (props.onStopTTS) {
+    props.onStopTTS();
+  }
+};
 
 // Function to process LaTeX in text
 const processLatex = (text) => {
@@ -206,6 +228,25 @@ watch([thinking, answer], () => {
             <template v-if="answer.length > 0">
               <div v-if="doneThinking" :class="thinking.length > 0 ? 'mt-2' : ''">
                 <div class="markdown" v-html="answer"></div>
+                <!-- TTS Speaker Button -->
+                <div class="flex justify-start mt-3">
+                  <button
+                    v-if="!isTTSSpeaking?.value"
+                    @click="handleSpeak"
+                    class="flex items-center gap-2 px-3 py-2 bg-gray-800/40 hover:bg-gray-700/40 border border-gray-600/40 hover:border-gray-500/60 rounded-lg transition-all duration-200 text-gray-300 hover:text-gray-200"
+                  >
+                    <SpeakerIcon class="h-4 w-4" />
+                    <span>Speak</span>
+                  </button>
+                  <button
+                    v-else
+                    @click="handleStopTTS"
+                    class="flex items-center gap-2 px-3 py-2 bg-red-800/40 hover:bg-red-700/40 border border-red-600/40 hover:border-red-500/60 rounded-lg transition-all duration-200 text-red-300 hover:text-red-200"
+                  >
+                    <PauseIcon class="h-4 w-4 animate-pulse" />
+                    <span>Stop</span>
+                  </button>
+                </div>
               </div>
             </template>
             <template v-else>
