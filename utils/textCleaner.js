@@ -37,13 +37,13 @@ export function cleanTextForTTS(text) {
   cleaned = cleaned.replace(/[\u{1F900}-\u{1F9FF}]|[\u{1FA70}-\u{1FAFF}]/gu, '');
   
   // Keep only allowed characters: A-Za-z0-9 space -+=!.,?\n
-  cleaned = cleaned.replace(/[^A-Za-z0-9 \-+=!.,?\n]/g, '');
+  cleaned = cleaned.replace(/[^A-Za-z0-9 !.,?\n]/g, '');
   
   // Convert newlines to periods for proper TTS pauses
   // Only add period if there isn't already punctuation before the newline
-  cleaned = cleaned.replace(/([^.!?])\n+/g, '$1. ');
+  cleaned = cleaned.replace(/([^.!?])\n+/g, ' ');
   // Handle newlines that are already preceded by punctuation
-  cleaned = cleaned.replace(/([.!?])\n+/g, '$1 ');
+  cleaned = cleaned.replace(/([.!?])\n+/g, ' ');
   
   // Clean up extra whitespace
   cleaned = cleaned.replace(/\s+/g, ' ');
